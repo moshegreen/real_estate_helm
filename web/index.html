@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Real Estate Helm</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <h1>Real Estate Helm</h1>
+        <p>Deal operating system for intake, underwriting, monitoring, and investment memory.</p>
+      </div>
+      <button id="refresh" type="button">Refresh</button>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <h2>Portfolio Dashboard</h2>
+        <div id="portfolio" class="metric-grid"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Deal Pipeline</h2>
+        <div id="pipeline" class="pipeline"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Deal Intake</h2>
+        <form id="create-deal" class="form-grid">
+          <input name="name" placeholder="Deal name" required>
+          <input name="address" placeholder="Address">
+          <input name="asset_type" placeholder="Asset type">
+          <input name="sponsor" placeholder="Sponsor">
+          <button type="submit">Create Deal</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Deal Detail</h2>
+        <div id="deal-detail" class="detail"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Document Review</h2>
+        <div id="documents" class="review-list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Financial Model</h2>
+        <div id="financial-model" class="model-list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Map and Market Context</h2>
+        <div id="market-context" class="context-grid"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Monitoring Center</h2>
+        <div id="alerts" class="alert-list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>IC Memo</h2>
+        <pre id="memo" class="memo"></pre>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

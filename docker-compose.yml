@@ -1,0 +1,48 @@
+services:
+  api:
+    build: .
+    command: real-estate-helm-server --host 0.0.0.0 --port 8765 --data-dir /data
+    env_file:
+      - .env
+    ports:
+      - "8765:8765"
+    volumes:
+      - helm-data:/data
+    depends_on:
+      - postgres
+      - minio
+      - redis
+
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-real_estate_helm}
+      POSTGRES_USER: ${POSTGRES_USER:-real_estate_helm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./schema/postgres.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-minio}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  helm-data:
+  postgres-data:
+  minio-data:

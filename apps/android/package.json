@@ -1,0 +1,14 @@
+{
+  "name": "real-estate-helm-android",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "start": "react-native start",
+    "android": "react-native run-android",
+    "build:android": "cd android && gradle assembleRelease"
+  },
+  "dependencies": {
+    "react": "latest",
+    "react-native": "latest"
+  }
+}

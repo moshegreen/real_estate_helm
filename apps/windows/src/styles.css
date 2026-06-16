@@ -1,0 +1,64 @@
+body {
+  margin: 0;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: #17202a;
+  color: white;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 20px;
+}
+
+.sidebar button,
+.deal-row {
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 10px;
+  text-align: left;
+}
+
+.workspace {
+  background: #f6f7f9;
+  padding: 20px;
+}
+
+.dashboard,
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.panel,
+.metric {
+  background: white;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.deal-row,
+.alert {
+  background: #ffffff;
+  border: 1px solid #e3e8ef;
+  display: block;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.deal-row span,
+.alert span {
+  color: #5f6b7a;
+  display: block;
+  margin-top: 4px;
+}

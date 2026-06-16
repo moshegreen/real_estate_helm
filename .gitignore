@@ -4,6 +4,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+.real_estate_helm/
 dist/
 build/
 *.egg-info/
