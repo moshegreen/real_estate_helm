@@ -6,17 +6,22 @@ import base64
 import json
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import PurePosixPath
 from typing import Any
 
 from real_estate_helm.analytics import portfolio_dashboard_metrics, rejected_deal_hindsight
+from real_estate_helm.cash_flow_import import CashFlowImportService
 from real_estate_helm.collaboration import CollaborationService
+from real_estate_helm.crm_import import CrmImportService
 from real_estate_helm.data_room import DataRoomImportService
 from real_estate_helm.email_import import EmailDealImportService
-from real_estate_helm.domain import Coordinates, DealStatus, DocumentReference, ObligationType, SourceKind
+from real_estate_helm.domain import CashFlowType, Coordinates, DealStatus, DocumentReference, ObligationType, SourceKind
 from real_estate_helm.intake import IntakeService
 from real_estate_helm.monitoring import add_new_alerts, monitoring_alerts
+from real_estate_helm.obligation_import import ObligationImportService
 from real_estate_helm.portfolio_qa import PortfolioQuestionAnswerer
 from real_estate_helm.reporting import (
+    generate_asset_monitoring_report_markdown,
     generate_development_progress_report_markdown,
     generate_ic_memo_markdown,
     generate_lender_covenant_report_markdown,
@@ -114,6 +119,24 @@ class ApiRouter:
                     "sender": result.sender,
                     "attachments_imported": result.attachments_imported,
                     "deal": deal_to_dict(self.repository.get(result.deal_id)),
+                },
+            )
+
+        if method == "POST" and segments == ["crm", "import"]:
+            if not body.get("content_base64"):
+                return ApiResponse(422, {"error": "validation_error", "detail": "content_base64 is required"})
+            csv_text = base64.b64decode(body["content_base64"]).decode("utf-8-sig")
+            result = CrmImportService(self.repository).import_csv(
+                csv_text,
+                default_owner=body.get("default_owner"),
+            )
+            return ApiResponse(
+                201,
+                {
+                    "imported_rows": result.imported_rows,
+                    "skipped_rows": result.skipped_rows,
+                    "deal_ids": result.deal_ids,
+                    "deals": [deal_to_dict(self.repository.get(deal_id)) for deal_id in result.deal_ids],
                 },
             )
 
@@ -220,6 +243,24 @@ class ApiRouter:
                     extracted_tables=body.get("extracted_tables", []),
                 )
                 return ApiResponse(201, deal_to_dict(deal))
+            if method == "POST" and segments[2:] == ["imagery"]:
+                required = {"content_base64", "filename", "captured_at", "source"}
+                if missing := sorted(name for name in required if not body.get(name)):
+                    return ApiResponse(422, {"error": "validation_error", "detail": f"{', '.join(missing)} are required"})
+                filename = _safe_filename(str(body["filename"]))
+                storage = LocalObjectStorage(self.repository.root / "objects")
+                stored = storage.put_bytes(
+                    f"deals/{deal_id}/imagery/{filename}",
+                    base64.b64decode(body["content_base64"]),
+                )
+                deal = self.intake.add_imagery_snapshot(
+                    deal_id,
+                    captured_at=str(body["captured_at"]),
+                    storage_uri=stored.uri,
+                    source=str(body["source"]),
+                    notes=body.get("notes"),
+                )
+                return ApiResponse(201, deal_to_dict(deal))
             if method == "POST" and segments[2:] == ["data-room"]:
                 if not body.get("content_base64") or not body.get("uploaded_by"):
                     return ApiResponse(422, {"error": "validation_error", "detail": "content_base64 and uploaded_by are required"})
@@ -288,6 +329,41 @@ class ApiRouter:
                     category=request.category,
                 )
                 return ApiResponse(201, deal_to_dict(deal))
+            if method == "POST" and segments[2:] == ["cash-flow-imports"]:
+                if not body.get("content_base64"):
+                    return ApiResponse(422, {"error": "validation_error", "detail": "content_base64 is required"})
+                csv_text = base64.b64decode(body["content_base64"]).decode("utf-8-sig")
+                default_type = CashFlowType(body.get("default_type", CashFlowType.ACTUAL.value))
+                result = CashFlowImportService(self.repository).import_csv(
+                    deal_id,
+                    csv_text,
+                    default_type=default_type,
+                )
+                return ApiResponse(
+                    201,
+                    {
+                        "imported_rows": result.imported_rows,
+                        "skipped_rows": result.skipped_rows,
+                        "deal": deal_to_dict(self.repository.get(deal_id)),
+                    },
+                )
+            if method == "POST" and segments[2:] == ["bank-statement-imports"]:
+                if not body.get("content_base64"):
+                    return ApiResponse(422, {"error": "validation_error", "detail": "content_base64 is required"})
+                csv_text = base64.b64decode(body["content_base64"]).decode("utf-8-sig")
+                result = CashFlowImportService(self.repository).import_bank_statement_csv(
+                    deal_id,
+                    csv_text,
+                    default_category=body.get("default_category", "bank_statement"),
+                )
+                return ApiResponse(
+                    201,
+                    {
+                        "imported_rows": result.imported_rows,
+                        "skipped_rows": result.skipped_rows,
+                        "deal": deal_to_dict(self.repository.get(deal_id)),
+                    },
+                )
             if method == "POST" and segments[2:] == ["rent-roll"]:
                 source = None
                 if body.get("source_name"):
@@ -325,6 +401,19 @@ class ApiRouter:
                     owner=body.get("owner"),
                 )
                 return ApiResponse(201, deal_to_dict(deal))
+            if method == "POST" and segments[2:] == ["obligation-imports"]:
+                if not body.get("content_base64"):
+                    return ApiResponse(422, {"error": "validation_error", "detail": "content_base64 is required"})
+                csv_text = base64.b64decode(body["content_base64"]).decode("utf-8-sig")
+                result = ObligationImportService(self.repository).import_csv(deal_id, csv_text)
+                return ApiResponse(
+                    201,
+                    {
+                        "imported_rows": result.imported_rows,
+                        "skipped_rows": result.skipped_rows,
+                        "deal": deal_to_dict(self.repository.get(deal_id)),
+                    },
+                )
             if method == "POST" and segments[2:] == ["monitoring"]:
                 deal = self.repository.get(deal_id)
                 add_new_alerts(deal, monitoring_alerts(deal))
@@ -346,6 +435,11 @@ class ApiRouter:
                 return ApiResponse(
                     200,
                     {"markdown": generate_development_progress_report_markdown(self.repository.get(deal_id))},
+                )
+            if method == "GET" and segments[2:] == ["reports", "asset-monitoring"]:
+                return ApiResponse(
+                    200,
+                    {"markdown": generate_asset_monitoring_report_markdown(self.repository.get(deal_id))},
                 )
             if method == "GET" and segments[2:] == ["reports", "lender-covenants"]:
                 return ApiResponse(
@@ -391,3 +485,11 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_safe(item) for item in value]
     return value
+
+
+def _safe_filename(filename: str) -> str:
+    normalized = filename.replace("\\", "/")
+    basename = PurePosixPath(normalized).name
+    if not basename or basename in {".", ".."}:
+        return "upload.bin"
+    return basename

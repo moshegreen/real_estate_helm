@@ -7,10 +7,12 @@ import json
 import os
 import sys
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, TextIO
 
 from real_estate_helm.analytics import portfolio_dashboard_metrics, rejected_deal_hindsight
+from real_estate_helm.cash_flow_import import CashFlowImportService
+from real_estate_helm.crm_import import CrmImportService
 from real_estate_helm.data_room import DataRoomImportService
 from real_estate_helm.email_import import EmailDealImportService
 from real_estate_helm.domain import (
@@ -28,8 +30,10 @@ from real_estate_helm.intake import IntakeService
 from real_estate_helm.extraction import ExtractionService, interpret_spreadsheet_cells, proposals_from_spreadsheet
 from real_estate_helm.exports import render_cash_flow_xlsx, render_deal_summary_pdf, render_ic_memo_pptx
 from real_estate_helm.monitoring import add_new_alerts, monitoring_alerts
+from real_estate_helm.obligation_import import ObligationImportService
 from real_estate_helm.portfolio_qa import PortfolioQuestionAnswerer
 from real_estate_helm.reporting import (
+    generate_asset_monitoring_report_markdown,
     generate_development_progress_report_markdown,
     generate_ic_memo_markdown,
     generate_lender_covenant_report_markdown,
@@ -217,6 +221,25 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         )
         return 0
 
+    if args.command == "import-crm":
+        result = CrmImportService(repository).import_csv(
+            args.csv_path.read_text(encoding="utf-8-sig"),
+            default_owner=args.default_owner,
+        )
+        print(
+            json.dumps(
+                {
+                    "imported_rows": result.imported_rows,
+                    "skipped_rows": result.skipped_rows,
+                    "deal_ids": result.deal_ids,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=stdout,
+        )
+        return 0
+
     if args.command == "add-cash-flow":
         deal = intake.add_cash_flow(
             args.deal_id,
@@ -228,6 +251,65 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         records = deal.projected_cash_flows if args.cash_flow_type == CashFlowType.PROJECTED.value else deal.actual_cash_flows
         record = records[-1]
         print(f"added-cash-flow {record.id} {record.period} {record.category}", file=stdout)
+        return 0
+
+    if args.command == "import-cash-flows":
+        result = CashFlowImportService(repository).import_csv(
+            args.deal_id,
+            args.csv_path.read_text(encoding="utf-8-sig"),
+            default_type=CashFlowType(args.default_type),
+        )
+        print(
+            json.dumps(
+                {"imported_rows": result.imported_rows, "skipped_rows": result.skipped_rows},
+                indent=2,
+                sort_keys=True,
+            ),
+            file=stdout,
+        )
+        return 0
+
+    if args.command == "import-bank-statement":
+        result = CashFlowImportService(repository).import_bank_statement_csv(
+            args.deal_id,
+            args.csv_path.read_text(encoding="utf-8-sig"),
+            default_category=args.default_category,
+        )
+        print(
+            json.dumps(
+                {"imported_rows": result.imported_rows, "skipped_rows": result.skipped_rows},
+                indent=2,
+                sort_keys=True,
+            ),
+            file=stdout,
+        )
+        return 0
+
+    if args.command == "import-imagery":
+        storage = LocalObjectStorage(args.storage_root or (args.data_dir / "objects"))
+        filename = _safe_filename(args.image_path.name)
+        stored = storage.put_bytes(f"deals/{args.deal_id}/imagery/{filename}", args.image_path.read_bytes())
+        deal = intake.add_imagery_snapshot(
+            args.deal_id,
+            captured_at=args.captured_at,
+            storage_uri=stored.uri,
+            source=args.source,
+            notes=args.notes,
+        )
+        snapshot = deal.imagery_snapshots[-1]
+        print(
+            json.dumps(
+                {
+                    "snapshot_id": snapshot.id,
+                    "captured_at": snapshot.captured_at,
+                    "source": snapshot.source,
+                    "storage_uri": snapshot.storage_uri,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=stdout,
+        )
         return 0
 
     if args.command == "add-rent-roll":
@@ -273,6 +355,21 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         )
         obligation = deal.obligations[-1]
         print(f"added-obligation {obligation.id} {obligation.obligation_type.value}", file=stdout)
+        return 0
+
+    if args.command == "import-obligations":
+        result = ObligationImportService(repository).import_csv(
+            args.deal_id,
+            args.csv_path.read_text(encoding="utf-8-sig"),
+        )
+        print(
+            json.dumps(
+                {"imported_rows": result.imported_rows, "skipped_rows": result.skipped_rows},
+                indent=2,
+                sort_keys=True,
+            ),
+            file=stdout,
+        )
         return 0
 
     if args.command == "add-fact":
@@ -382,6 +479,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         deal = repository.get(args.deal_id)
         if args.report_type == "monthly-performance":
             report = generate_monthly_performance_report_markdown(deal, period=args.period)
+        elif args.report_type == "asset-monitoring":
+            report = generate_asset_monitoring_report_markdown(deal)
         elif args.report_type == "development-progress":
             report = generate_development_progress_report_markdown(deal)
         else:
@@ -518,12 +617,34 @@ def _build_parser() -> argparse.ArgumentParser:
     email_attachments.add_argument("--key-prefix")
     email_attachments.add_argument("--storage-root", type=Path)
 
+    crm = subparsers.add_parser("import-crm", help="Import deal pipeline records from a CRM CSV export.")
+    crm.add_argument("--csv-path", required=True, type=Path)
+    crm.add_argument("--default-owner")
+
     add_cash_flow = subparsers.add_parser("add-cash-flow", help="Attach projected or actual cash flow.")
     add_cash_flow.add_argument("deal_id")
     add_cash_flow.add_argument("--period", required=True)
     add_cash_flow.add_argument("--category", required=True)
     add_cash_flow.add_argument("--amount", required=True)
     add_cash_flow.add_argument("--cash-flow-type", choices=_enum_values(CashFlowType), required=True)
+
+    import_cash_flows = subparsers.add_parser("import-cash-flows", help="Import projected or actual cash-flow rows from CSV.")
+    import_cash_flows.add_argument("deal_id")
+    import_cash_flows.add_argument("--csv-path", required=True, type=Path)
+    import_cash_flows.add_argument("--default-type", choices=_enum_values(CashFlowType), default=CashFlowType.ACTUAL.value)
+
+    bank_statement = subparsers.add_parser("import-bank-statement", help="Import bank statement transactions as actual cash flows.")
+    bank_statement.add_argument("deal_id")
+    bank_statement.add_argument("--csv-path", required=True, type=Path)
+    bank_statement.add_argument("--default-category", default="bank_statement")
+
+    imagery = subparsers.add_parser("import-imagery", help="Store a photo, drone image, or satellite snapshot for a deal.")
+    imagery.add_argument("deal_id")
+    imagery.add_argument("--image-path", required=True, type=Path)
+    imagery.add_argument("--captured-at", required=True)
+    imagery.add_argument("--source", required=True)
+    imagery.add_argument("--notes")
+    imagery.add_argument("--storage-root", type=Path)
 
     rent_roll = subparsers.add_parser("add-rent-roll", help="Attach a rent-roll line item to a deal.")
     rent_roll.add_argument("deal_id")
@@ -552,6 +673,10 @@ def _build_parser() -> argparse.ArgumentParser:
     add_obligation.add_argument("--amount")
     add_obligation.add_argument("--source")
     add_obligation.add_argument("--owner")
+
+    import_obligations = subparsers.add_parser("import-obligations", help="Import legal deadlines, expirations, and capital calls from CSV.")
+    import_obligations.add_argument("deal_id")
+    import_obligations.add_argument("--csv-path", required=True, type=Path)
 
     add_fact = subparsers.add_parser("add-fact", help="Attach an extracted fact to a deal.")
     add_fact.add_argument("deal_id")
@@ -639,7 +764,7 @@ def _build_parser() -> argparse.ArgumentParser:
     report.add_argument(
         "--report-type",
         required=True,
-        choices=["monthly-performance", "development-progress", "lender-covenants"],
+        choices=["monthly-performance", "asset-monitoring", "development-progress", "lender-covenants"],
     )
     report.add_argument("--period", help="Optional reporting period for monthly performance reports, such as 2027-01.")
 
@@ -695,6 +820,14 @@ def _deal_summary(deal: Any) -> str:
     if deal.identity.address:
         parts.append(deal.identity.address)
     return " | ".join(parts)
+
+
+def _safe_filename(filename: str) -> str:
+    normalized = filename.replace("\\", "/")
+    basename = PurePosixPath(normalized).name
+    if not basename or basename in {".", ".."}:
+        return "upload.bin"
+    return basename
 
 
 if __name__ == "__main__":

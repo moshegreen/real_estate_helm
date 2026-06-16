@@ -12,6 +12,7 @@ from unittest.mock import patch
 from real_estate_helm import Assumption, FactReviewStatus, Scenario, ScenarioType
 from real_estate_helm.cli import main
 from real_estate_helm.repository import JsonDealRepository
+from real_estate_helm.storage import LocalObjectStorage
 
 
 class CliTests(TestCase):
@@ -290,6 +291,78 @@ class CliTests(TestCase):
                 ],
                 stdout=io.StringIO(),
             )
+            csv_path = Path(directory) / "actuals.csv"
+            csv_path.write_text(
+                "period,category,amount,cash_flow_type\n"
+                "2027-02,noi,95000,actual\n"
+                "2027-02,noi,105000,projected\n"
+                "bad,noi,nope,actual\n"
+            )
+            import_output = io.StringIO()
+            main(
+                [
+                    "--data-dir",
+                    directory,
+                    "import-cash-flows",
+                    deal_id,
+                    "--csv-path",
+                    str(csv_path),
+                ],
+                stdout=import_output,
+            )
+            import_payload = json.loads(import_output.getvalue())
+            imported_deal = JsonDealRepository(directory).get(deal_id)
+            self.assertEqual(import_payload["imported_rows"], 2)
+            self.assertEqual(len(import_payload["skipped_rows"]), 1)
+            self.assertEqual(imported_deal.actual_cash_flows[1].amount, Decimal("95000"))
+            self.assertEqual(imported_deal.projected_cash_flows[1].amount, Decimal("105000"))
+            bank_path = Path(directory) / "bank.csv"
+            bank_path.write_text("date,description,deposit,withdrawal\n2027-03-05,Rent collection,142000,\n2027-03-06,Repair invoice,,25000\n")
+            bank_output = io.StringIO()
+            main(
+                [
+                    "--data-dir",
+                    directory,
+                    "import-bank-statement",
+                    deal_id,
+                    "--csv-path",
+                    str(bank_path),
+                ],
+                stdout=bank_output,
+            )
+            bank_payload = json.loads(bank_output.getvalue())
+            bank_deal = JsonDealRepository(directory).get(deal_id)
+            self.assertEqual(bank_payload["imported_rows"], 2)
+            self.assertEqual(bank_deal.actual_cash_flows[2].amount, Decimal("142000"))
+            self.assertEqual(bank_deal.actual_cash_flows[3].amount, Decimal("-25000"))
+            image_path = Path(directory) / "site.jpg"
+            image_path.write_bytes(b"image-bytes")
+            imagery_output = io.StringIO()
+            main(
+                [
+                    "--data-dir",
+                    directory,
+                    "import-imagery",
+                    deal_id,
+                    "--image-path",
+                    str(image_path),
+                    "--captured-at",
+                    "2027-02-15",
+                    "--source",
+                    "drone",
+                    "--notes",
+                    "North elevation progress photo.",
+                ],
+                stdout=imagery_output,
+            )
+            imagery_payload = json.loads(imagery_output.getvalue())
+            imagery_deal = JsonDealRepository(directory).get(deal_id)
+            self.assertEqual(imagery_payload["source"], "drone")
+            self.assertEqual(imagery_deal.imagery_snapshots[0].notes, "North elevation progress photo.")
+            self.assertEqual(
+                LocalObjectStorage(Path(directory) / "objects").get_bytes(imagery_deal.imagery_snapshots[0].storage_uri),
+                b"image-bytes",
+            )
             rent_roll_output = io.StringIO()
             main(
                 [
@@ -339,6 +412,30 @@ class CliTests(TestCase):
                 stdout=obligation_output,
             )
             self.assertIn("added-obligation", obligation_output.getvalue())
+            obligations_path = Path(directory) / "obligations.csv"
+            obligations_path.write_text(
+                "title,due_date,obligation_type,amount,source,owner\n"
+                "File zoning appeal,2027-01-10,legal_deadline,,legal tracker,counsel\n"
+                "Insurance certificate,2027-01-20,document_expiration,,data room,analyst\n"
+                "Broken row,,capital_call,100,fund notice,principal\n"
+            )
+            obligations_output = io.StringIO()
+            main(
+                [
+                    "--data-dir",
+                    directory,
+                    "import-obligations",
+                    deal_id,
+                    "--csv-path",
+                    str(obligations_path),
+                ],
+                stdout=obligations_output,
+            )
+            obligations_payload = json.loads(obligations_output.getvalue())
+            obligations_deal = JsonDealRepository(directory).get(deal_id)
+            self.assertEqual(obligations_payload["imported_rows"], 2)
+            self.assertEqual(len(obligations_payload["skipped_rows"]), 1)
+            self.assertEqual(obligations_deal.obligations[1].owner, "counsel")
 
             monitoring_output = io.StringIO()
             main(["--data-dir", directory, "run-monitoring", deal_id], stdout=monitoring_output)
@@ -365,6 +462,21 @@ class CliTests(TestCase):
             )
             self.assertIn("# Monthly Performance Report: Oak Retail", report_output.getvalue())
             self.assertIn("Variance: -10000", report_output.getvalue())
+
+            asset_report_output = io.StringIO()
+            main(
+                [
+                    "--data-dir",
+                    directory,
+                    "generate-report",
+                    deal_id,
+                    "--report-type",
+                    "asset-monitoring",
+                ],
+                stdout=asset_report_output,
+            )
+            self.assertIn("# Asset Monitoring Report: Oak Retail", asset_report_output.getvalue())
+            self.assertIn("100 Oak Street", asset_report_output.getvalue())
 
             summary_output = io.StringIO()
             main(["--data-dir", directory, "portfolio-summary"], stdout=summary_output)
@@ -494,6 +606,32 @@ class CliTests(TestCase):
             deal = JsonDealRepository(directory).get(deal_id)
             self.assertEqual(payload["attachments_imported"], 1)
             self.assertEqual(deal.documents[0].name, "om.pdf")
+
+    def test_import_crm_command_creates_pipeline_deals(self) -> None:
+        with TemporaryDirectory() as directory:
+            csv_path = Path(directory) / "crm.csv"
+            csv_path.write_text("deal_name,property_address,asset_class,stage\nCRM CLI Deal,1 CRM Way,office,screening\n")
+
+            output = io.StringIO()
+            main(
+                [
+                    "--data-dir",
+                    directory,
+                    "import-crm",
+                    "--csv-path",
+                    str(csv_path),
+                    "--default-owner",
+                    "analyst",
+                ],
+                stdout=output,
+            )
+
+            payload = json.loads(output.getvalue())
+            deal = JsonDealRepository(directory).get(payload["deal_ids"][0])
+            self.assertEqual(payload["imported_rows"], 1)
+            self.assertEqual(deal.identity.name, "CRM CLI Deal")
+            self.assertEqual(deal.identity.owner, "analyst")
+            self.assertEqual(deal.status.value, "screening")
 
     def test_spreadsheet_proposals_mapping_and_rejected_hindsight_commands(self) -> None:
         with TemporaryDirectory() as directory:

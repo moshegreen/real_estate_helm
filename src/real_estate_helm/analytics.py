@@ -212,6 +212,58 @@ def actual_vs_underwritten(deal: Deal, metric_name: str) -> dict[str, Any]:
     }
 
 
+def forecast_vs_actual_learning(
+    deals: list[Deal],
+    metrics: list[str] | None = None,
+    *,
+    materiality_threshold: Decimal = Decimal("0.05"),
+) -> list[dict[str, Any]]:
+    metrics = metrics or ["noi", "irr", "equity_multiple", "cash_on_cash", "dscr"]
+    rows = []
+    for metric in metrics:
+        comparisons = [
+            (deal, actual_vs_underwritten(deal, metric))
+            for deal in deals
+        ]
+        complete = [
+            (deal, comparison)
+            for deal, comparison in comparisons
+            if comparison["underwritten"] is not None and comparison["actual"] is not None
+        ]
+        if not complete:
+            continue
+        variances = [comparison["variance"] for _, comparison in complete if comparison["variance"] is not None]
+        variance_percents = [
+            comparison["variance_percent"]
+            for _, comparison in complete
+            if comparison["variance_percent"] is not None
+        ]
+        average_variance = sum(variances, Decimal("0")) / Decimal(len(variances)) if variances else None
+        average_variance_percent = (
+            sum(variance_percents, Decimal("0")) / Decimal(len(variance_percents))
+            if variance_percents
+            else None
+        )
+        if average_variance_percent is None:
+            direction = "insufficient_data"
+        elif average_variance_percent >= materiality_threshold:
+            direction = "underwritten_conservative"
+        elif average_variance_percent <= -materiality_threshold:
+            direction = "underwritten_aggressive"
+        else:
+            direction = "near_underwriting"
+        rows.append(
+            {
+                "metric": metric,
+                "deal_count": len(complete),
+                "average_variance": average_variance,
+                "average_variance_percent": average_variance_percent,
+                "direction": direction,
+            }
+        )
+    return rows
+
+
 def occupancy_rate(deal: Deal) -> Decimal | None:
     rent_roll_rate = rent_roll_occupancy_rate(deal)
     if rent_roll_rate is not None:

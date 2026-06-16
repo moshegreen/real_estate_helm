@@ -21,6 +21,7 @@ from real_estate_helm import (
     DocumentReference,
     ExtractedFact,
     FactReviewStatus,
+    ImagerySnapshot,
     InvestmentDecision,
     Lease,
     LocationContextItem,
@@ -50,6 +51,7 @@ from real_estate_helm.analytics import (
     exposure_by_asset_type,
     exposure_by_geography,
     exposure_by_sponsor,
+    forecast_vs_actual_learning,
     lease_expiry_schedule,
     market_rent_gap,
     occupancy_rate,
@@ -58,9 +60,11 @@ from real_estate_helm.analytics import (
     rejected_deal_hindsight,
     rejected_deals,
     rent_roll_occupancy_rate,
+    renewal_probability_by_tenant,
     tenant_concentration,
     vacancy_rate,
     weighted_average_lease_term,
+    weighted_renewal_probability,
 )
 from real_estate_helm.monitoring import (
     add_new_alerts,
@@ -72,17 +76,20 @@ from real_estate_helm.monitoring import (
     contingency_consumption_alerts,
     comparable_sale_alerts,
     insurance_cost_alerts,
+    imagery_progress_alerts,
     local_news_alerts,
     monitoring_alerts,
     obligation_alerts,
     permit_risk_alerts,
     property_assessment_alerts,
+    rent_collection_alerts,
     sponsor_litigation_alerts,
     tenant_credit_alerts,
 )
 from real_estate_helm.reporting import (
     export_cash_flow_variance_csv,
     export_deal_json,
+    generate_asset_monitoring_report_markdown,
     generate_development_progress_report_markdown,
     generate_ic_memo_markdown,
     generate_lender_covenant_report_markdown,
@@ -133,6 +140,31 @@ class AnalyticsMonitoringReportingTests(TestCase):
         self.assertEqual(exposure_by_asset_type([deal, rejected]), {"retail": 1, "office": 1})
         self.assertEqual(len(open_alerts([deal, rejected])), 2)
         self.assertEqual(rejected_deals([deal, rejected]), [rejected])
+
+    def test_rent_collection_alert_requires_two_consecutive_bad_months(self) -> None:
+        deal = Deal(DealIdentity("Collections Deal"))
+        deal.projected_cash_flows.extend(
+            [
+                CashFlowRecord("2027-01", Decimal("100000"), CashFlowType.PROJECTED, "rent_collections"),
+                CashFlowRecord("2027-02", Decimal("100000"), CashFlowType.PROJECTED, "rent_collections"),
+                CashFlowRecord("2027-03", Decimal("100000"), CashFlowType.PROJECTED, "rent_collections"),
+            ]
+        )
+        deal.actual_cash_flows.extend(
+            [
+                CashFlowRecord("2027-01", Decimal("93000"), CashFlowType.ACTUAL, "rent_collections"),
+                CashFlowRecord("2027-02", Decimal("90000"), CashFlowType.ACTUAL, "rent_collections"),
+                CashFlowRecord("2027-03", Decimal("88000"), CashFlowType.ACTUAL, "rent_collections"),
+            ]
+        )
+
+        alerts = rent_collection_alerts(deal)
+
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0].category, "rent_collections")
+        self.assertEqual(alerts[0].financial_impact, Decimal("-22000"))
+        self.assertIn("2027-02, 2027-03", alerts[0].description)
+        self.assertIn("rent_collections", {alert.category for alert in monitoring_alerts(deal)})
 
     def test_portfolio_dashboard_metrics_include_plan_level_summary_fields(self) -> None:
         deal = Deal(DealIdentity("Dashboard Deal", asset_type="retail", sponsor="SponsorCo"))
@@ -254,6 +286,21 @@ class AnalyticsMonitoringReportingTests(TestCase):
         self.assertEqual(learning["variance"], Decimal("-100000"))
         self.assertEqual(learning["variance_percent"], Decimal("-0.1"))
 
+    def test_forecast_vs_actual_learning_identifies_bias_direction(self) -> None:
+        deal = Deal(DealIdentity("Learning Deal"))
+        base = Scenario("Acquisition Case", ScenarioType.ACQUISITION_CASE)
+        base.outputs["noi"] = Decimal("1000000")
+        actuals = Scenario("Actuals", ScenarioType.ACTUALS)
+        actuals.outputs["noi"] = Decimal("900000")
+        deal.scenarios.extend([base, actuals])
+
+        rows = forecast_vs_actual_learning([deal], ["noi"])
+
+        self.assertEqual(rows[0]["metric"], "noi")
+        self.assertEqual(rows[0]["average_variance"], Decimal("-100000"))
+        self.assertEqual(rows[0]["average_variance_percent"], Decimal("-0.1"))
+        self.assertEqual(rows[0]["direction"], "underwritten_aggressive")
+
     def test_cash_flow_variance_csv_export(self) -> None:
         rows = [
             {
@@ -273,11 +320,20 @@ class AnalyticsMonitoringReportingTests(TestCase):
 
     def test_portfolio_monitoring_and_rejected_review_reports(self) -> None:
         active = Deal(DealIdentity("Active Deal", asset_type="retail"))
-        active.assets.append(Asset("Active Deal", address=Address("1 Main", state="TX"), asset_type="retail"))
+        active.assets.append(
+            Asset(
+                "Active Deal",
+                address=Address("1 Main", state="TX"),
+                coordinates=Coordinates(32.1, 34.8),
+                asset_type="retail",
+            )
+        )
         active.projected_cash_flows.append(CashFlowRecord("2027-01", Decimal("100"), CashFlowType.PROJECTED, "noi"))
         active.actual_cash_flows.append(CashFlowRecord("2027-01", Decimal("90"), CashFlowType.ACTUAL, "noi"))
         active.debt_terms.append(DebtTerms(lender="Bank", maturity_date="2027-06-01", covenant_dscr=Decimal("1.20")))
         active.development_milestones.append(DevelopmentMilestone("Permit approval", "2027-03-01", MilestoneStatus.ON_TRACK))
+        active.location_context.append(LocationContextItem(LocationContextType.TRANSIT, "Light rail", distance_miles=0.2))
+        active.imagery_snapshots.append(ImagerySnapshot("2027-02-15", "local://site.jpg", "drone", notes="Active site."))
         active.alerts.append(Alert("NOI below budget", AlertSeverity.HIGH, "cash_flow", "import", "NOI is low"))
         rejected = Deal(DealIdentity("Rejected Deal"))
         rejected.assumptions.append(Assumption("proposed_price", Decimal("100"), "Broker"))
@@ -286,12 +342,16 @@ class AnalyticsMonitoringReportingTests(TestCase):
 
         portfolio = generate_portfolio_report_markdown([active, rejected])
         monitoring = generate_monitoring_report_markdown(active)
+        asset_monitoring = generate_asset_monitoring_report_markdown(active)
         rejected_review = generate_rejected_deal_review_markdown([active, rejected])
 
         self.assertIn("# Portfolio Report", portfolio)
         self.assertIn("- retail: 1", portfolio)
         self.assertIn("NOI below budget", monitoring)
         self.assertIn("Debt Covenant Watch", monitoring)
+        self.assertIn("# Asset Monitoring Report: Active Deal", asset_monitoring)
+        self.assertIn("Light rail", asset_monitoring)
+        self.assertIn("local://site.jpg", asset_monitoring)
         self.assertIn("Rejected Deal", rejected_review)
         self.assertIn("missed gain 20", rejected_review)
 
@@ -441,21 +501,60 @@ class AnalyticsMonitoringReportingTests(TestCase):
         self.assertEqual(supply_alerts[0].category, "market_supply")
         self.assertGreaterEqual(len(monitoring_alerts(deal)), 3)
 
+    def test_imagery_progress_alerts_when_site_activity_stalls(self) -> None:
+        deal = Deal(DealIdentity("Imagery Progress Deal"))
+        deal.development_milestones.append(
+            DevelopmentMilestone("Foundation work", "2027-02-01", MilestoneStatus.ON_TRACK)
+        )
+        deal.imagery_snapshots.extend(
+            [
+                ImagerySnapshot("2027-01-01", "local://site-jan.jpg", "sentinel", notes="No visible construction progress."),
+                ImagerySnapshot("2027-02-20", "local://site-feb.jpg", "drone", notes="Site unchanged; no site activity."),
+            ]
+        )
+
+        alerts = imagery_progress_alerts(deal)
+
+        self.assertEqual(alerts[0].category, "imagery_progress")
+        self.assertEqual(alerts[0].severity, AlertSeverity.HIGH)
+        self.assertIn("50 days", alerts[0].title)
+        self.assertIn("imagery_progress", {alert.category for alert in monitoring_alerts(deal)})
+
     def test_income_asset_lease_and_tenant_analytics(self) -> None:
         deal = Deal(DealIdentity("Retail Center"))
         deal.assets.append(Asset("Retail Center", unit_count=4))
         anchor = Tenant("Anchor Grocer")
         shop = Tenant("Coffee Shop")
         deal.tenants.extend([anchor, shop])
-        deal.leases.append(Lease(anchor.id, unit="A", end_date="2029-01-01", annual_rent=Decimal("300000")))
-        deal.leases.append(Lease(shop.id, unit="B", end_date="2027-01-01", annual_rent=Decimal("100000")))
+        deal.leases.append(
+            Lease(
+                anchor.id,
+                unit="A",
+                end_date="2029-01-01",
+                annual_rent=Decimal("300000"),
+                renewal_probability=Decimal("0.80"),
+            )
+        )
+        deal.leases.append(
+            Lease(
+                shop.id,
+                unit="B",
+                end_date="2027-01-01",
+                annual_rent=Decimal("100000"),
+                renewal_probability=Decimal("0.40"),
+            )
+        )
 
         concentration = tenant_concentration(deal)
+        renewal_rows = renewal_probability_by_tenant(deal)
 
         self.assertEqual(occupancy_rate(deal), Decimal("0.5"))
         self.assertEqual(lease_expiry_schedule(deal), {"2027": 1, "2029": 1})
         self.assertEqual(concentration[0]["tenant_name"], "Anchor Grocer")
         self.assertEqual(concentration[0]["percent_of_rent"], Decimal("0.75"))
+        self.assertEqual(weighted_renewal_probability(deal), Decimal("0.70"))
+        self.assertEqual(renewal_rows[0]["tenant_name"], "Coffee Shop")
+        self.assertEqual(renewal_rows[0]["renewal_probability"], Decimal("0.40"))
         self.assertEqual(
             weighted_average_lease_term(deal, as_of=date(2026, 1, 1)).quantize(Decimal("0.01")),
             Decimal("2.50"),

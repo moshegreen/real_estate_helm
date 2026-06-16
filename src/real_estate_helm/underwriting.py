@@ -61,6 +61,62 @@ def total_profit(
     return _decimal(total_distributions) - _decimal(equity_invested)
 
 
+def hold_period_return(
+    sale_proceeds: Decimal | int | float | str,
+    cumulative_cash_flow: Decimal | int | float | str,
+    equity_invested: Decimal | int | float | str,
+) -> Decimal:
+    return _ratio(_decimal(sale_proceeds) + _decimal(cumulative_cash_flow) - _decimal(equity_invested), equity_invested)
+
+
+def refinance_proceeds(
+    stabilized_noi: Decimal | int | float | str,
+    refinance_debt_yield: Decimal | int | float | str,
+    existing_debt_payoff: Decimal | int | float | str = 0,
+    closing_costs: Decimal | int | float | str = 0,
+) -> Decimal:
+    gross_refinance = _ratio(stabilized_noi, refinance_debt_yield)
+    return gross_refinance - _decimal(existing_debt_payoff) - _decimal(closing_costs)
+
+
+def downside_loss_exposure(
+    invested_equity: Decimal | int | float | str,
+    downside_value: Decimal | int | float | str,
+    outstanding_debt: Decimal | int | float | str = 0,
+    sale_costs: Decimal | int | float | str = 0,
+) -> Decimal:
+    equity_recovery = max(_decimal(downside_value) - _decimal(outstanding_debt) - _decimal(sale_costs), Decimal("0"))
+    return max(_decimal(invested_equity) - equity_recovery, Decimal("0"))
+
+
+def inflation_adjusted_amount(
+    base_amount: Decimal | int | float | str,
+    inflation_rate: Decimal | int | float | str,
+    periods: int,
+) -> Decimal:
+    return _decimal(base_amount) * ((Decimal("1") + _decimal(inflation_rate)) ** periods)
+
+
+def property_tax_expense(
+    assessed_value: Decimal | int | float | str,
+    tax_rate: Decimal | int | float | str,
+    appeal_reduction: Decimal | int | float | str = 0,
+) -> Decimal:
+    taxable_value = _decimal(assessed_value) * (Decimal("1") - _decimal(appeal_reduction))
+    return taxable_value * _decimal(tax_rate)
+
+
+def maintenance_reserve(
+    unit_count: Decimal | int | float | str = 0,
+    reserve_per_unit: Decimal | int | float | str = 0,
+    square_feet: Decimal | int | float | str = 0,
+    reserve_per_square_foot: Decimal | int | float | str = 0,
+) -> Decimal:
+    return (_decimal(unit_count) * _decimal(reserve_per_unit)) + (
+        _decimal(square_feet) * _decimal(reserve_per_square_foot)
+    )
+
+
 def variance(
     actual: Decimal | int | float | str,
     projected: Decimal | int | float | str,

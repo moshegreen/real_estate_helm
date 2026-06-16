@@ -10,6 +10,7 @@ from real_estate_helm.analytics import (
     actual_vs_underwritten,
     exposure_by_asset_type,
     exposure_by_geography,
+    forecast_vs_actual_learning,
     open_alerts,
     rejected_deal_hindsight,
     status_counts,
@@ -48,6 +49,8 @@ class PortfolioQuestionAnswerer:
             return _exposure_answer(question, "exposure_by_asset_type", exposure_by_asset_type(deals))
         if "actual" in normalized and ("underwritten" in normalized or "underwriting" in normalized):
             return _actual_vs_underwritten_answer(deals, question, _metric_from_question(normalized))
+        if "forecast" in normalized or "learning" in normalized or "conservative" in normalized:
+            return _forecast_learning_answer(deals, question)
         if "status" in normalized or "pipeline" in normalized:
             counts = {status.value: count for status, count in status_counts(deals).items()}
             return _exposure_answer(question, "status_counts", counts)
@@ -104,6 +107,14 @@ def _actual_vs_underwritten_answer(deals: list[Deal], question: str, metric: str
             continue
         rows.append({"deal_id": deal.id, "deal_name": deal.identity.name, **result})
     return PortfolioAnswer(question, "actual_vs_underwritten", f"{len(rows)} deals have {metric} comparison data.", rows)
+
+
+def _forecast_learning_answer(deals: list[Deal], question: str) -> PortfolioAnswer:
+    rows = forecast_vs_actual_learning(deals)
+    aggressive = [row for row in rows if row["direction"] == "underwritten_aggressive"]
+    conservative = [row for row in rows if row["direction"] == "underwritten_conservative"]
+    summary = f"{len(aggressive)} aggressive and {len(conservative)} conservative forecast patterns found."
+    return PortfolioAnswer(question, "forecast_vs_actual_learning", summary, rows)
 
 
 def _exposure_by_sponsor(deals: list[Deal]) -> dict[str, int]:

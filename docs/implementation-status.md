@@ -16,7 +16,12 @@ This repository now implements the local backend foundation for `plan.md`.
 - Zipped data-room import workflow that stores files through object storage and attaches typed document records via API and CLI.
 - Local folder import workflow for diligence/data-room folders with safe relative paths, metadata skipping, typed documents, and object-storage persistence via API and CLI.
 - Email deal import workflow that creates deals from `.eml` messages, stores attachments through object storage, sanitizes attachment names, and exposes API/CLI paths for new and existing deals.
+- CRM CSV export import workflow that creates durable pipeline deal records with status, owner, source, sponsor, broker, and property metadata via API and CLI.
+- Legal/deadline CSV import workflow for legal deadlines, document expirations, and capital calls with skipped-row reporting via API and CLI.
 - Document-page provenance records for OCR text, page images, extracted tables, and review source highlighting via API and CLI.
+- CSV cash-flow import workflow for actual and projected operating rows, with skipped-row reporting through API and CLI.
+- Bank-statement CSV import workflow that maps deposits and withdrawals into actual cash-flow records via API and CLI.
+- Local imagery upload workflow for photos, drone imagery, and satellite snapshots with object-storage persistence via API and CLI.
 - Standard-library HTTP server that serves the JSON API and browser dashboard scaffold.
 - Optional FastAPI app factory over the same API router.
 - Browser dashboard scaffold for portfolio metrics, Kanban-style pipeline with plan-level card metadata, deal intake, deal detail, document review, financial model, market context, monitoring alerts, and IC memo preview.
@@ -32,7 +37,7 @@ This repository now implements the local backend foundation for `plan.md`.
 - Re-extraction request workflow for low-confidence or disputed extracted facts, including fact status updates, generated follow-up tasks, and audit entries via API/CLI.
 - OCR/LLM-style document extraction and summary provider contracts with static test adapters.
 - HTTP JSON OCR/document-AI extraction and LLM summary adapters with confidence calibration.
-- Deterministic underwriting math for ratios, loan-to-cost, break-even occupancy, exit value, development spread, NPV, IRR, payback, variance, and sensitivities.
+- Deterministic underwriting math for ratios, loan-to-cost, break-even occupancy, exit value, refinance proceeds, hold-period return, downside loss exposure, tax expense, inflation, maintenance reserves, development spread, NPV, IRR, payback, variance, and sensitivities.
 - Scenario cloning, scenario output comparison, and assumption comparison.
 - Sponsor spreadsheet comparison against canonical assumptions plus scenario CSV export.
 - Scenario assumption update workflow with actor/rationale audit logging and changed-output traces.
@@ -41,9 +46,11 @@ This repository now implements the local backend foundation for `plan.md`.
 - Monitoring rules for legal deadlines, document expirations, and capital calls.
 - Monitoring rules for insurance cost increases and development contingency consumption.
 - Monitoring rules for sponsor litigation mentions, tenant credit/bankruptcy risk, and nearby competing development.
-- Portfolio analytics for dashboard metrics, value/equity/gain rollups, sponsor/geography/asset exposure, debt maturities, capital calls, open alerts, rejected-deal hindsight, and actual-vs-underwritten variance.
-- Deterministic natural-language portfolio Q&A for alerts, rejected-deal hindsight, exposure, status, and actual-vs-underwritten questions via API and CLI.
-- Income-asset analytics for rent-roll occupancy, vacancy, concessions, bad debt, market-rent gap, lease expiry schedule, tenant concentration, and weighted average lease term.
+- Monitoring rules for rent collections below budget across consecutive monthly periods.
+- Monitoring rules for stalled construction progress inferred from repeated satellite/drone imagery notes.
+- Portfolio analytics for dashboard metrics, value/equity/gain rollups, sponsor/geography/asset exposure, debt maturities, capital calls, open alerts, rejected-deal hindsight, actual-vs-underwritten variance, and forecast-vs-actual learning patterns.
+- Deterministic natural-language portfolio Q&A for alerts, rejected-deal hindsight, exposure, status, actual-vs-underwritten, and forecast-learning questions via API and CLI.
+- Income-asset analytics for rent-roll occupancy, vacancy, concessions, bad debt, market-rent gap, lease expiry schedule, tenant concentration, renewal probability, and weighted average lease term.
 - Geospatial analytics for radius searches and exposure by geography.
 - Provider adapter contracts for geocoding, market comps, local news, imagery, and web sources.
 - Provider adapter contracts and HTTP JSON adapters for geocoding, market comps, property data, permits, local news, imagery, and web-source providers.
@@ -63,7 +70,7 @@ This repository now implements the local backend foundation for `plan.md`.
 - Task workflow service for mobile/desktop task assignment and completion.
 - Source health alert rules for failed external feeds.
 - Expanded Markdown IC memo with thesis, property details, sponsor details, sources and uses, debt terms, projected returns, scenario table, sensitivity snapshot, comps, map/local context, red flags, recommendation, source citations, and human approval marker.
-- Portfolio, monitoring, monthly performance, development progress, lender covenant, and rejected-deal review reports plus JSON, CSV, PDF, XLSX, and PPTX exports, including CLI artifact writers.
+- Portfolio, monitoring, asset-level monitoring, monthly performance, development progress, lender covenant, and rejected-deal review reports plus JSON, CSV, PDF, XLSX, and PPTX exports, including CLI artifact writers.
 - PostgreSQL/PostGIS target schema draft.
 - PostgreSQL SQL mapper, migration runner, and DB-API execution adapter for parameterized deal upsert statements.
 - CI workflow for unit tests, bytecode compile checks, and API image builds.

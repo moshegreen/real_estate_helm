@@ -51,3 +51,6 @@ class PortfolioQuestionAnswererTests(TestCase):
         self.assertEqual(answerer.answer([deal], "Pipeline status").rows, [{"name": "watchlist", "count": 1}])
         variance = answerer.answer([deal], "Actual vs underwritten NOI").to_dict()["rows"][0]
         self.assertEqual(variance["variance"], "-10")
+        learning = answerer.answer([deal], "What did the forecast learning loop show?").to_dict()
+        self.assertEqual(learning["answer_type"], "forecast_vs_actual_learning")
+        self.assertEqual(learning["rows"][0]["direction"], "underwritten_aggressive")

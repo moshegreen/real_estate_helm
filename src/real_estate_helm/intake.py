@@ -14,6 +14,7 @@ from real_estate_helm.domain import (
     DocumentPage,
     DocumentReference,
     DocumentType,
+    ImagerySnapshot,
     Obligation,
     ObligationType,
     RentRollEntry,
@@ -154,6 +155,27 @@ class IntakeService:
                 text_content=text_content,
                 image_uri=image_uri,
                 extracted_tables=extracted_tables or [],
+            )
+        )
+        self.repository.save(deal)
+        return deal
+
+    def add_imagery_snapshot(
+        self,
+        deal_id: str,
+        *,
+        captured_at: str,
+        storage_uri: str,
+        source: str,
+        notes: str | None = None,
+    ) -> Deal:
+        deal = self.repository.get(deal_id)
+        deal.imagery_snapshots.append(
+            ImagerySnapshot(
+                captured_at=captured_at,
+                storage_uri=storage_uri,
+                source=source,
+                notes=notes,
             )
         )
         self.repository.save(deal)

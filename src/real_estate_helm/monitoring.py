@@ -25,6 +25,7 @@ def monitoring_alerts(
     source_statuses: dict[str, bool] | None = None,
 ) -> list[Alert]:
     alerts = cash_flow_variance_alerts(deal)
+    alerts.extend(rent_collection_alerts(deal))
     alerts.extend(development_delay_alerts(deal))
     alerts.extend(debt_maturity_alerts(deal))
     alerts.extend(local_news_alerts(deal))
@@ -37,6 +38,7 @@ def monitoring_alerts(
     alerts.extend(sponsor_litigation_alerts(deal))
     alerts.extend(tenant_credit_alerts(deal))
     alerts.extend(competing_development_alerts(deal))
+    alerts.extend(imagery_progress_alerts(deal))
     if source_statuses:
         alerts.extend(source_health_alerts(deal, source_statuses))
     return alerts
@@ -64,6 +66,44 @@ def cash_flow_variance_alerts(
                 )
             )
     return alerts
+
+
+def rent_collection_alerts(
+    deal: Deal,
+    *,
+    threshold_percent: Decimal = Decimal("-0.08"),
+    consecutive_periods: int = 2,
+) -> list[Alert]:
+    rent_rows = [row for row in cash_flow_variances(deal) if _is_rent_collection_category(row["category"])]
+    rent_rows.sort(key=lambda row: row["period"])
+    latest_streak: list[dict[str, object]] = []
+    current_streak: list[dict[str, object]] = []
+    for row in rent_rows:
+        variance_pct = row["variance_percent"]
+        under_budget = variance_pct is not None and variance_pct <= threshold_percent
+        if not under_budget:
+            current_streak = []
+            continue
+        if current_streak and not _is_next_month(str(current_streak[-1]["period"]), str(row["period"])):
+            current_streak = []
+        current_streak.append(row)
+        if len(current_streak) >= consecutive_periods:
+            latest_streak = list(current_streak[-consecutive_periods:])
+    if not latest_streak:
+        return []
+    total_variance = sum((row["variance"] for row in latest_streak), Decimal("0"))
+    periods = ", ".join(row["period"] for row in latest_streak)
+    return [
+        Alert(
+            title=f"Rent collections below budget for {consecutive_periods} consecutive months",
+            severity=AlertSeverity.HIGH,
+            category="rent_collections",
+            source="cash_flow_variance",
+            description=f"Rent collections were at least {abs(threshold_percent):.0%} below budget for {periods}.",
+            financial_impact=total_variance,
+            recommended_action="Review property management collections, tenant arrears, and bad debt assumptions.",
+        )
+    ]
 
 
 def development_delay_alerts(deal: Deal, *, today: date | None = None) -> list[Alert]:
@@ -242,6 +282,42 @@ def competing_development_alerts(
             )
         )
     return alerts
+
+
+def imagery_progress_alerts(
+    deal: Deal,
+    *,
+    stalled_days: int = 45,
+) -> list[Alert]:
+    if not (deal.development_milestones or deal.development_budgets):
+        return []
+    no_progress = [
+        (snapshot_date, snapshot)
+        for snapshot in deal.imagery_snapshots
+        if (snapshot_date := _snapshot_date(snapshot.captured_at)) is not None
+        and _notes_indicate_no_progress(snapshot.notes)
+    ]
+    if len(no_progress) < 2:
+        return []
+    no_progress.sort(key=lambda item: item[0])
+    first_date, first_snapshot = no_progress[0]
+    latest_date, latest_snapshot = no_progress[-1]
+    days_without_progress = (latest_date - first_date).days
+    if days_without_progress < stalled_days:
+        return []
+    return [
+        Alert(
+            title=f"Satellite imagery shows no visible construction progress for {days_without_progress} days",
+            severity=AlertSeverity.HIGH,
+            category="imagery_progress",
+            source=latest_snapshot.source,
+            description=(
+                f"Imagery notes indicate no visible site progress from {first_snapshot.captured_at} "
+                f"through {latest_snapshot.captured_at}."
+            ),
+            recommended_action="Request sponsor construction update, compare site imagery, and refresh delay impact analysis.",
+        )
+    ]
 
 
 def permit_risk_alerts(deal: Deal) -> list[Alert]:
@@ -502,3 +578,42 @@ def _cash_flow_amount(records: list[object], category: str) -> Decimal | None:
             total += Decimal(str(getattr(record, "amount")))
             found = True
     return total if found else None
+
+
+def _snapshot_date(value: str) -> date | None:
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
+
+
+def _notes_indicate_no_progress(notes: str | None) -> bool:
+    if not notes:
+        return False
+    text = notes.casefold()
+    terms = {
+        "no visible construction progress",
+        "no visible progress",
+        "no progress",
+        "unchanged",
+        "stalled",
+        "inactive site",
+        "no site activity",
+    }
+    return any(term in text for term in terms)
+
+
+def _is_rent_collection_category(category: str) -> bool:
+    normalized = category.replace("-", "_").replace(" ", "_").casefold()
+    return normalized in {"rent", "rent_collection", "rent_collections", "collections"}
+
+
+def _is_next_month(left: str, right: str) -> bool:
+    try:
+        left_year, left_month = [int(part) for part in left[:7].split("-")]
+        right_year, right_month = [int(part) for part in right[:7].split("-")]
+    except ValueError:
+        return False
+    if left_month == 12:
+        return right_year == left_year + 1 and right_month == 1
+    return right_year == left_year and right_month == left_month + 1
